@@ -6,9 +6,12 @@ Run with:
 """
 from __future__ import annotations
 
+import io
 import re
+from datetime import datetime, timedelta
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -17,6 +20,22 @@ import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 MODEL_NAME = "distilbert-base-uncased-finetuned-sst-2-english"
+
+# --- Aspect keyword dictionary ---------------------------------------------
+# Simple lexicon used to tag which business aspect a review touches on. We
+# keep this hand-curated rather than ML so the demo runs without extra deps.
+ASPECT_KEYWORDS: dict[str, list[str]] = {
+    "Product":  ["product", "quality", "build", "material", "feature", "design",
+                 "size", "colour", "color", "flimsy", "sturdy", "broken"],
+    "Service":  ["service", "support", "staff", "rep", "agent", "call centre",
+                 "call center", "helpful", "rude", "polite", "responsive"],
+    "Price":    ["price", "cost", "expensive", "cheap", "value", "money",
+                 "refund", "overpriced", "affordable", "worth"],
+    "Delivery": ["delivery", "shipping", "shipped", "arrived", "package",
+                 "packaging", "courier", "late", "fast", "slow", "wait"],
+    "Support":  ["support", "help", "warranty", "return", "refund", "complaint",
+                 "ticket", "response", "fix", "repair"],
+}
 
 st.set_page_config(
     page_title="ReviewCoach — Sentiment AI",
@@ -307,10 +326,67 @@ def render_score(s: dict, text: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Batch + analytics helpers
+# --------------------------------------------------------------------------- #
+@torch.no_grad()
+def score_batch(texts: list[str], batch_size: int = 16) -> list[float]:
+    """Return positive-sentiment probability for each text."""
+    probs: list[float] = []
+    for i in range(0, len(texts), batch_size):
+        chunk = [str(t)[:1000] for t in texts[i : i + batch_size]]
+        enc = tokenizer(chunk, return_tensors="pt", truncation=True,
+                        padding=True, max_length=256)
+        out = model(**enc)
+        p = torch.softmax(out.logits, dim=-1)[:, 1].cpu().numpy().tolist()
+        probs.extend(p)
+    return probs
+
+
+def label_aspects(text: str) -> list[str]:
+    t = (text or "").lower()
+    return [a for a, kws in ASPECT_KEYWORDS.items() if any(k in t for k in kws)]
+
+
+def parse_uploaded_reviews(uploaded) -> pd.DataFrame:
+    """Accept CSV or TXT. CSV looks for a 'text' or 'review' column; TXT = one
+    review per line. Returns a DataFrame with at least a 'text' column."""
+    name = uploaded.name.lower()
+    raw = uploaded.read()
+    if name.endswith(".csv"):
+        df = pd.read_csv(io.BytesIO(raw))
+        text_col = next((c for c in df.columns
+                         if c.lower() in {"text", "review", "comment", "body",
+                                          "content", "message"}),
+                        df.columns[0])
+        df = df.rename(columns={text_col: "text"})
+    else:
+        text = raw.decode("utf-8", errors="ignore")
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        df = pd.DataFrame({"text": lines})
+    # If a date-like column already exists, normalise it; otherwise fabricate
+    # one from the row index so the time-series view still works.
+    date_col = next((c for c in df.columns
+                     if c.lower() in {"date", "order_date", "review_date",
+                                      "timestamp", "created_at"}), None)
+    if date_col:
+        df["date"] = pd.to_datetime(df[date_col], errors="coerce")
+    if "date" not in df.columns or df["date"].isna().all():
+        base = datetime.today() - timedelta(days=max(len(df) - 1, 0))
+        df["date"] = [base + timedelta(days=i) for i in range(len(df))]
+    return df[["text", "date"]].dropna(subset=["text"]).reset_index(drop=True)
+
+
+# --------------------------------------------------------------------------- #
 if "history" not in st.session_state:
     st.session_state.history = []
 
 with st.sidebar:
+    mode = st.radio(
+        "Mode",
+        ["Chat coach", "Batch analytics"],
+        help="Chat for single-review coaching, Batch for uploading a file of reviews.",
+    )
+    st.markdown("---")
     st.subheader("How this works")
     st.markdown(
         "- Paste a review or message in the chat.\n"
@@ -318,7 +394,8 @@ with st.sidebar:
         "- Then ask follow-ups:\n"
         "  - *\"Why is this negative?\"*\n"
         "  - *\"Rewrite it more positively\"*\n"
-        "  - *\"Make it more formal\"*"
+        "  - *\"Make it more formal\"*\n"
+        "- Switch to **Batch analytics** to score a CSV/TXT of reviews."
     )
     st.markdown("---")
     if st.button("Clear chat", use_container_width=True):
@@ -328,39 +405,245 @@ with st.sidebar:
     st.caption("Model: `distilbert-base-uncased-finetuned-sst-2-english`")
     st.caption("≈ 250 MB local model — no API, no data leaves the Space.")
 
-for turn in st.session_state.history:
-    with st.chat_message(turn["role"], avatar=("🧑" if turn["role"] == "user" else "🤖")):
-        if turn.get("text"):
-            st.markdown(turn["text"])
-        if turn.get("score"):
-            render_score(turn["score"], turn.get("scored_text", ""))
+if mode == "Chat coach":
+    for turn in st.session_state.history:
+        with st.chat_message(turn["role"], avatar=("🧑" if turn["role"] == "user" else "🤖")):
+            if turn.get("text"):
+                st.markdown(turn["text"])
+            if turn.get("score"):
+                render_score(turn["score"], turn.get("scored_text", ""))
 
-if not st.session_state.history:
-    st.markdown(
-        '<div class="insight"><div class="head">START HERE</div>'
-        '<div class="body">Try pasting <i>"This product is absolutely fantastic, '
-        'the best purchase of the year!"</i> — or paste your own review. '
-        'Then ask me to <i>rewrite</i> or <i>explain</i>.</div></div>',
-        unsafe_allow_html=True,
+    if not st.session_state.history:
+        st.markdown(
+            '<div class="insight"><div class="head">START HERE</div>'
+            '<div class="body">Try pasting <i>"This product is absolutely fantastic, '
+            'the best purchase of the year!"</i> — or paste your own review. '
+            'Then ask me to <i>rewrite</i> or <i>explain</i>.</div></div>',
+            unsafe_allow_html=True,
+        )
+
+    prompt = st.chat_input("Paste a review, ask me to rewrite, or ask why...")
+    if prompt:
+        st.session_state.history.append({"role": "user", "text": prompt, "scored_text": prompt})
+        with st.chat_message("user", avatar="🧑"):
+            st.markdown(prompt)
+
+        with st.chat_message("assistant", avatar="🤖"):
+            with st.spinner("Thinking..."):
+                result = respond(prompt, st.session_state.history)
+            if result.get("text"):
+                st.markdown(result["text"])
+            if result.get("score"):
+                render_score(result["score"], result.get("scored_text", prompt))
+
+        st.session_state.history.append({
+            "role": "assistant",
+            "text": result.get("text", ""),
+            "scored_text": result.get("scored_text"),
+            "score": result.get("score"),
+        })
+
+else:
+    # --------------------------------------------------------------------- #
+    # Batch analytics mode
+    # --------------------------------------------------------------------- #
+    st.subheader(":bar_chart: Batch sentiment analytics")
+    st.caption(
+        "Drag-drop a CSV (with a `text` or `review` column) or a TXT file "
+        "(one review per line). The model scores every row, tags aspects, "
+        "and produces a 30-day sentiment trend plus a recommended action."
     )
 
-prompt = st.chat_input("Paste a review, ask me to rewrite, or ask why...")
-if prompt:
-    st.session_state.history.append({"role": "user", "text": prompt, "scored_text": prompt})
-    with st.chat_message("user", avatar="🧑"):
-        st.markdown(prompt)
+    upl = st.file_uploader(
+        "Upload reviews (CSV or TXT)", type=["csv", "txt"],
+        accept_multiple_files=False,
+    )
 
-    with st.chat_message("assistant", avatar="🤖"):
-        with st.spinner("Thinking..."):
-            result = respond(prompt, st.session_state.history)
-        if result.get("text"):
-            st.markdown(result["text"])
-        if result.get("score"):
-            render_score(result["score"], result.get("scored_text", prompt))
+    use_sample = st.checkbox(
+        "Use the bundled sample (data/reviews.csv, 500 rows)", value=upl is None,
+    )
 
-    st.session_state.history.append({
-        "role": "assistant",
-        "text": result.get("text", ""),
-        "scored_text": result.get("scored_text"),
-        "score": result.get("score"),
-    })
+    df_in: pd.DataFrame | None = None
+    if upl is not None:
+        df_in = parse_uploaded_reviews(upl)
+    elif use_sample:
+        try:
+            sample = pd.read_csv("data/reviews.csv").head(500)
+            text_col = next((c for c in sample.columns
+                             if c.lower() in {"text", "review"}), sample.columns[0])
+            sample = sample.rename(columns={text_col: "text"})
+            base = datetime.today() - timedelta(days=len(sample) - 1)
+            sample["date"] = [base + timedelta(days=i) for i in range(len(sample))]
+            df_in = sample[["text", "date"]].reset_index(drop=True)
+        except FileNotFoundError:
+            st.warning("Sample file data/reviews.csv not found. Upload your own file.")
+
+    if df_in is not None and len(df_in) > 0:
+        n = len(df_in)
+        if n > 2000:
+            st.warning(f"File has {n:,} rows — scoring the first 2,000 to keep the demo snappy.")
+            df_in = df_in.head(2000)
+
+        with st.spinner(f"Scoring {len(df_in):,} reviews with DistilBERT..."):
+            df_in = df_in.copy()
+            df_in["pos_prob"] = score_batch(df_in["text"].astype(str).tolist())
+            df_in["sentiment"] = np.where(df_in["pos_prob"] >= 0.5, "POSITIVE", "NEGATIVE")
+            df_in["aspects"] = df_in["text"].astype(str).apply(label_aspects)
+
+        # -- Top KPI strip -------------------------------------------------
+        pos_share = float((df_in["sentiment"] == "POSITIVE").mean())
+        neg_share = 1 - pos_share
+        avg_score = float(df_in["pos_prob"].mean())
+        a, b, c, d = st.columns(4)
+        a.metric("Reviews scored", f"{len(df_in):,}")
+        b.metric("Positive share", f"{pos_share*100:.1f}%")
+        c.metric("Negative share", f"{neg_share*100:.1f}%")
+        d.metric("Mean confidence (+)", f"{avg_score*100:.1f}%")
+
+        # -- Aggregate breakdown ------------------------------------------
+        st.markdown("##### Sentiment distribution")
+        breakdown = (df_in["sentiment"].value_counts(normalize=True) * 100).reset_index()
+        breakdown.columns = ["sentiment", "share"]
+        fig = px.bar(
+            breakdown, x="sentiment", y="share", color="sentiment",
+            color_discrete_map={"POSITIVE": "#27AE60", "NEGATIVE": "#E74C3C"},
+            text=breakdown["share"].map(lambda x: f"{x:.1f}%"),
+        )
+        fig.update_layout(yaxis_title="Share of reviews (%)", xaxis_title="",
+                          height=320, showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+        dominant = "positive" if pos_share >= 0.5 else "negative"
+        st.markdown(
+            '<div class="insight"><div class="head">OVERALL TONE</div>'
+            f'<div class="body">The batch reads <b>{dominant}</b> overall — '
+            f'<b>{pos_share*100:.1f}%</b> positive vs <b>{neg_share*100:.1f}%</b> negative. '
+            f'{"Customers are mostly happy; focus on amplifying the wins." if pos_share >= 0.5 else "Most reviews lean negative — drill into aspects below to see where to intervene first."}'
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
+
+        # -- Aspect drill-down --------------------------------------------
+        st.markdown("##### Aspect drill-down")
+        st.caption("Sentiment per business aspect. A review can touch multiple aspects.")
+
+        aspect_rows = []
+        for _, row in df_in.iterrows():
+            for a in row["aspects"]:
+                aspect_rows.append({"aspect": a, "pos_prob": row["pos_prob"],
+                                    "sentiment": row["sentiment"]})
+        aspect_df = pd.DataFrame(aspect_rows)
+
+        if len(aspect_df) == 0:
+            st.info("No reviews mentioned any of the tracked aspects.")
+            top_neg_aspect = None
+        else:
+            grp = aspect_df.groupby("aspect").agg(
+                mentions=("aspect", "size"),
+                pos_share=("sentiment", lambda s: (s == "POSITIVE").mean()),
+                mean_score=("pos_prob", "mean"),
+            ).reset_index().sort_values("mean_score")
+            grp["neg_share"] = 1 - grp["pos_share"]
+
+            fig = px.bar(
+                grp, x="mean_score", y="aspect", orientation="h",
+                color="mean_score",
+                color_continuous_scale=["#E74C3C", "#F39C12", "#27AE60"],
+                range_color=[0, 1],
+                text=grp["mean_score"].map(lambda x: f"{x*100:.0f}%"),
+                hover_data={"mentions": True, "pos_share": ":.0%",
+                            "neg_share": ":.0%", "mean_score": False},
+                labels={"mean_score": "Mean positive score", "aspect": ""},
+            )
+            fig.update_layout(coloraxis_showscale=False, height=320,
+                              margin=dict(l=10, r=10, t=10, b=10),
+                              xaxis_tickformat=".0%")
+            st.plotly_chart(fig, use_container_width=True)
+            top_neg_aspect = grp.iloc[0]["aspect"]
+            top_neg_share = float(grp.iloc[0]["neg_share"])
+            st.markdown(
+                '<div class="insight"><div class="head">TOP COMPLAINT AREA</div>'
+                f'<div class="body">Out of the tracked aspects, '
+                f'<b>{top_neg_aspect}</b> has the lowest sentiment '
+                f'(<b>{top_neg_share*100:.0f}%</b> of mentions are negative). '
+                'This is where retention spend pays back fastest.'
+                '</div></div>',
+                unsafe_allow_html=True,
+            )
+
+        # -- Time-series trend --------------------------------------------
+        st.markdown("##### 30-day sentiment trend")
+        st.caption("Rolling 30-day mean positive score. If your file has no date column, we use the row order as a synthetic timeline so the demo still works.")
+        ts = (df_in.set_index("date")["pos_prob"]
+                    .sort_index()
+                    .rolling("30D", min_periods=1)
+                    .mean()
+                    .reset_index())
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=ts["date"], y=ts["pos_prob"], mode="lines",
+            line=dict(color="#F39C12", width=3), fill="tozeroy",
+            fillcolor="rgba(243,156,18,0.18)", name="30-day rolling sentiment",
+        ))
+        fig.add_hline(y=0.5, line_dash="dash", line_color="#95A5A6",
+                      annotation_text="Neutral", annotation_position="right")
+        fig.update_layout(
+            yaxis=dict(range=[0, 1], tickformat=".0%",
+                       title="Positive-sentiment share"),
+            xaxis=dict(title=""),
+            height=340, margin=dict(l=10, r=10, t=10, b=10),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        if len(ts) > 1:
+            start, end = float(ts["pos_prob"].iloc[0]), float(ts["pos_prob"].iloc[-1])
+            delta = end - start
+            direction = "improving" if delta > 0.02 else ("worsening" if delta < -0.02 else "flat")
+            st.markdown(
+                '<div class="insight"><div class="head">TREND</div>'
+                f'<div class="body">Rolling sentiment has moved from '
+                f'<b>{start*100:.0f}%</b> to <b>{end*100:.0f}%</b> '
+                f'over the window — <b>{direction}</b>. '
+                f'{"Keep doing what is working." if direction == "improving" else ("Investigate which aspect started slipping and when." if direction == "worsening" else "Stable book — small interventions can still tilt this.")}'
+                '</div></div>',
+                unsafe_allow_html=True,
+            )
+
+        # -- Business action panel ----------------------------------------
+        st.markdown("##### Recommended business actions")
+        action_lib = {
+            "Product":  "Retrain QA on the failure modes named in complaints; consider a targeted product refresh or recall communication.",
+            "Service":  "Run a call-centre coaching cycle on the top 10 negative tickets; tighten the SLA for first response.",
+            "Price":    "Audit the price ladder against competitors; consider a value-bundle or loyalty discount before more customers churn.",
+            "Delivery": "Review the courier mix in the worst-performing lanes; introduce SMS proactive ETA updates.",
+            "Support":  "Re-time the support escalation matrix; auto-route refund / warranty tickets to a senior agent.",
+        }
+        if top_neg_aspect:
+            head = f"PRIORITY ACTION: {top_neg_aspect.upper()}"
+            body = action_lib.get(top_neg_aspect, "Investigate further.")
+            st.markdown(
+                f'<div class="insight"><div class="head">{head}</div>'
+                f'<div class="body">Top complaint area: <b>{top_neg_aspect}</b> &mdash; {body}</div></div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.info("No dominant negative aspect detected. Continue monitoring.")
+
+        # -- Per-row table -------------------------------------------------
+        st.markdown("##### Scored reviews (top 100)")
+        show = df_in.head(100).copy()
+        show["aspects"] = show["aspects"].apply(lambda a: ", ".join(a) if a else "—")
+        show["pos_prob"] = show["pos_prob"].map(lambda x: f"{x*100:.1f}%")
+        st.dataframe(
+            show[["date", "text", "sentiment", "pos_prob", "aspects"]],
+            use_container_width=True, hide_index=True, height=420,
+        )
+
+        csv_bytes = df_in.assign(
+            aspects=df_in["aspects"].apply(lambda a: "|".join(a))
+        ).to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "Download scored CSV", csv_bytes, file_name="scored_reviews.csv",
+            mime="text/csv",
+        )
+    else:
+        st.info("Upload a file or tick the sample-data checkbox to begin.")

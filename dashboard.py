@@ -1,5 +1,7 @@
-"""ReviewCoach — a conversational AI that analyses sentiment, explains why,
-and helps you rewrite text. Powered by a fine-tuned DistilBERT.
+"""Streamlit dashboard for the review sentiment project.
+
+A sentiment tool built on a fine-tuned DistilBERT: coach a single review
+(score it, explain why, rewrite it) or score a whole file of reviews.
 
 Run with:
     streamlit run dashboard.py
@@ -16,8 +18,6 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-import torch
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 MODEL_NAME = "distilbert-base-uncased-finetuned-sst-2-english"
 
@@ -37,56 +37,73 @@ ASPECT_KEYWORDS: dict[str, list[str]] = {
                  "ticket", "response", "fix", "repair"],
 }
 
+# A calm, professional palette — not the marketing-hero template look.
+INK = "#1f2933"
+MUTED = "#6b7280"
+POS = "#4b9e7a"      # muted green for positive
+NEG = "#b4452f"      # warm brick for negative
+PLOT_TEMPLATE = "plotly_white"
+
 st.set_page_config(
-    page_title="ReviewCoach — Sentiment AI",
-    page_icon=":robot_face:",
+    page_title="Review sentiment",
+    page_icon="💬",
     layout="wide",
 )
 
 st.markdown(
-    """
+    f"""
     <style>
-    #MainMenu, footer {visibility: hidden;}
-    .hero {
-        background: linear-gradient(135deg, #F39C12 0%, #7E4F00 100%);
-        padding: 32px 28px;
-        border-radius: 16px;
-        color: white;
-        margin: -10px 0 22px 0;
-        box-shadow: 0 12px 32px rgba(243, 156, 18, 0.25);
-    }
-    .hero h1 { margin: 0; font-size: 36px; font-weight: 800; letter-spacing: -0.5px; }
-    .hero p  { margin: 8px 0 0 0; font-size: 16px; opacity: 0.95; }
-    .badge {
+    #MainMenu, footer {{visibility: hidden;}}
+    .badge {{
         display: inline-block; padding: 4px 12px; border-radius: 20px;
         font-size: 12px; font-weight: 700; letter-spacing: 0.6px;
         color: white; margin: 0 4px;
-    }
-    .badge.pos { background: #27AE60; }
-    .badge.neg { background: #E74C3C; }
-    .insight {
-        background: linear-gradient(180deg, #FFFFFF 0%, #FFF8E7 100%);
-        border-left: 4px solid #F39C12;
-        padding: 14px 18px;
-        border-radius: 10px;
-        margin: 8px 0;
-    }
-    .insight .head { font-size: 11px; color: #F39C12; font-weight: 800; letter-spacing: 1.2px; }
-    .insight .body { font-size: 15px; color: #2C3E50; margin-top: 4px; }
+    }}
+    .badge.pos {{ background: {POS}; }}
+    .badge.neg {{ background: {NEG}; }}
     </style>
 
-    <div class="hero">
-      <h1>:robot_face: ReviewCoach</h1>
-      <p>A conversational AI that scores sentiment, explains <i>why</i>, and helps you rewrite. Powered by a fine-tuned DistilBERT.</p>
+    <div style="margin:-6px 0 6px 0;">
+      <div style="font-size:13px; letter-spacing:.8px; color:{MUTED};
+                  text-transform:uppercase;">Customer reviews &middot; sentiment</div>
+      <h1 style="margin:2px 0 4px 0; font-size:30px; font-weight:700; color:{INK};">
+        Reading the tone of what customers write</h1>
+      <div style="font-size:16px; color:{MUTED};">
+        A sentiment tool built on a fine-tuned DistilBERT — coach a single review,
+        or score a whole file and see where the complaints cluster.</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
+st.divider()
+
+
+def note(text: str) -> None:
+    """A quiet analyst's note — sentence-case, no shouting, woven into the page."""
+    st.markdown(
+        f'<div style="border-left:3px solid #d7dbe0; background:#f7f8fa; '
+        f'padding:11px 16px; margin:4px 0 22px 0; color:#3a434d; '
+        f'font-size:15px; line-height:1.6;">{text}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def style_fig(fig, height=340):
+    fig.update_layout(
+        template=PLOT_TEMPLATE,
+        height=height,
+        margin=dict(l=10, r=10, t=30, b=10),
+        font=dict(color=INK, size=13),
+    )
+    return fig
 
 
 # --------------------------------------------------------------------------- #
 @st.cache_resource(show_spinner="Loading DistilBERT (first launch downloads ~250 MB)...")
 def load_model():
+    # torch + transformers are imported here, not at module top: they take tens
+    # of seconds to load and would otherwise freeze the page on every launch.
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer
     tok = AutoTokenizer.from_pretrained(MODEL_NAME)
     mdl = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
     mdl.eval()
@@ -99,6 +116,7 @@ tokenizer, model = load_model()
 # --------------------------------------------------------------------------- #
 def score(text: str) -> dict[str, Any]:
     """Return sentiment label, confidence, and per-token attribution."""
+    import torch  # cheap after load_model() has run; kept off the import path
     inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=256)
     with torch.no_grad():
         outputs = model(**inputs)
@@ -286,7 +304,7 @@ def respond(message: str, history: list) -> dict[str, Any]:
 
 # --------------------------------------------------------------------------- #
 def render_score(s: dict, text: str) -> None:
-    colour = "#27AE60" if s["label"] == "POSITIVE" else "#E74C3C"
+    colour = POS if s["label"] == "POSITIVE" else NEG
     a, b = st.columns([1, 1.3])
     with a:
         st.markdown(
@@ -298,18 +316,19 @@ def render_score(s: dict, text: str) -> None:
         fig = go.Figure(go.Indicator(
             mode="gauge+number",
             value=s["pos_prob"] * 100,
-            number={"suffix": "%"},
+            number={"suffix": "%", "font": {"color": colour}},
             gauge={
                 "axis": {"range": [0, 100]},
                 "bar": {"color": colour},
+                "bgcolor": "white", "borderwidth": 0,
                 "steps": [
-                    {"range": [0, 50], "color": "#FADBD8"},
-                    {"range": [50, 100], "color": "#D5F5E3"},
+                    {"range": [0, 50], "color": "#f7e4de"},
+                    {"range": [50, 100], "color": "#eaf5ef"},
                 ],
             },
         ))
-        fig.update_layout(height=200, margin=dict(l=10, r=10, t=10, b=10))
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(style_fig(fig, 200), use_container_width=True,
+                        config={"displayModeBar": False})
 
     with b:
         attrs = sorted(s["attributions"], key=lambda x: x["delta"])
@@ -317,28 +336,30 @@ def render_score(s: dict, text: str) -> None:
         plot_df = plot_df.sort_values("delta")
         fig = px.bar(
             plot_df, x="delta", y="token", orientation="h",
-            color="delta", color_continuous_scale="RdYlGn", color_continuous_midpoint=0,
+            color="delta", color_continuous_scale=[NEG, "#e8e8e8", POS],
+            color_continuous_midpoint=0,
             labels={"delta": "Contribution to positive score", "token": ""},
         )
-        fig.update_layout(coloraxis_showscale=False, height=300,
-                           margin=dict(l=10, r=10, t=10, b=10))
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        fig.update_layout(coloraxis_showscale=False)
+        st.plotly_chart(style_fig(fig, 300), use_container_width=True,
+                        config={"displayModeBar": False})
 
 
 # --------------------------------------------------------------------------- #
 # Batch + analytics helpers
 # --------------------------------------------------------------------------- #
-@torch.no_grad()
 def score_batch(texts: list[str], batch_size: int = 16) -> list[float]:
     """Return positive-sentiment probability for each text."""
+    import torch
     probs: list[float] = []
-    for i in range(0, len(texts), batch_size):
-        chunk = [str(t)[:1000] for t in texts[i : i + batch_size]]
-        enc = tokenizer(chunk, return_tensors="pt", truncation=True,
-                        padding=True, max_length=256)
-        out = model(**enc)
-        p = torch.softmax(out.logits, dim=-1)[:, 1].cpu().numpy().tolist()
-        probs.extend(p)
+    with torch.no_grad():
+        for i in range(0, len(texts), batch_size):
+            chunk = [str(t)[:1000] for t in texts[i : i + batch_size]]
+            enc = tokenizer(chunk, return_tensors="pt", truncation=True,
+                            padding=True, max_length=256)
+            out = model(**enc)
+            p = torch.softmax(out.logits, dim=-1)[:, 1].cpu().numpy().tolist()
+            probs.extend(p)
     return probs
 
 
@@ -414,12 +435,11 @@ if mode == "Chat coach":
                 render_score(turn["score"], turn.get("scored_text", ""))
 
     if not st.session_state.history:
-        st.markdown(
-            '<div class="insight"><div class="head">START HERE</div>'
-            '<div class="body">Try pasting <i>"This product is absolutely fantastic, '
-            'the best purchase of the year!"</i> — or paste your own review. '
-            'Then ask me to <i>rewrite</i> or <i>explain</i>.</div></div>',
-            unsafe_allow_html=True,
+        note(
+            'To get started, try pasting something like <i>"This product is absolutely '
+            'fantastic, the best purchase of the year!"</i> — or any review of your own. '
+            'Once it\'s scored, you can ask me to <i>rewrite</i> it or <i>explain</i> why '
+            'it landed where it did.'
         )
 
     prompt = st.chat_input("Paste a review, ask me to rewrite, or ask why...")
@@ -447,7 +467,7 @@ else:
     # --------------------------------------------------------------------- #
     # Batch analytics mode
     # --------------------------------------------------------------------- #
-    st.subheader(":bar_chart: Batch sentiment analytics")
+    st.markdown("#### Batch sentiment analytics")
     st.caption(
         "Drag-drop a CSV (with a `text` or `review` column) or a TXT file "
         "(one review per line). The model scores every row, tags aspects, "
@@ -506,20 +526,21 @@ else:
         breakdown.columns = ["sentiment", "share"]
         fig = px.bar(
             breakdown, x="sentiment", y="share", color="sentiment",
-            color_discrete_map={"POSITIVE": "#27AE60", "NEGATIVE": "#E74C3C"},
+            color_discrete_map={"POSITIVE": POS, "NEGATIVE": NEG},
             text=breakdown["share"].map(lambda x: f"{x:.1f}%"),
         )
         fig.update_layout(yaxis_title="Share of reviews (%)", xaxis_title="",
-                          height=320, showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
+                          showlegend=False)
+        st.plotly_chart(style_fig(fig, 320), use_container_width=True)
         dominant = "positive" if pos_share >= 0.5 else "negative"
-        st.markdown(
-            '<div class="insight"><div class="head">OVERALL TONE</div>'
-            f'<div class="body">The batch reads <b>{dominant}</b> overall — '
-            f'<b>{pos_share*100:.1f}%</b> positive vs <b>{neg_share*100:.1f}%</b> negative. '
-            f'{"Customers are mostly happy; focus on amplifying the wins." if pos_share >= 0.5 else "Most reviews lean negative — drill into aspects below to see where to intervene first."}'
-            '</div></div>',
-            unsafe_allow_html=True,
+        tone_tail = ("Customers are mostly happy here, so the useful move is to work out "
+                     "what's going right and amplify it."
+                     if pos_share >= 0.5 else
+                     "Most reviews lean negative, so it's worth drilling into the aspects "
+                     "below to see where to intervene first.")
+        note(
+            f"The batch reads <b>{dominant}</b> overall — <b>{pos_share*100:.1f}%</b> "
+            f"positive against <b>{neg_share*100:.1f}%</b> negative. {tone_tail}"
         )
 
         # -- Aspect drill-down --------------------------------------------
@@ -547,27 +568,22 @@ else:
             fig = px.bar(
                 grp, x="mean_score", y="aspect", orientation="h",
                 color="mean_score",
-                color_continuous_scale=["#E74C3C", "#F39C12", "#27AE60"],
+                color_continuous_scale=[NEG, "#c98a3a", POS],
                 range_color=[0, 1],
                 text=grp["mean_score"].map(lambda x: f"{x*100:.0f}%"),
                 hover_data={"mentions": True, "pos_share": ":.0%",
                             "neg_share": ":.0%", "mean_score": False},
                 labels={"mean_score": "Mean positive score", "aspect": ""},
             )
-            fig.update_layout(coloraxis_showscale=False, height=320,
-                              margin=dict(l=10, r=10, t=10, b=10),
-                              xaxis_tickformat=".0%")
-            st.plotly_chart(fig, use_container_width=True)
+            fig.update_layout(coloraxis_showscale=False, xaxis_tickformat=".0%")
+            st.plotly_chart(style_fig(fig, 320), use_container_width=True)
             top_neg_aspect = grp.iloc[0]["aspect"]
             top_neg_share = float(grp.iloc[0]["neg_share"])
-            st.markdown(
-                '<div class="insight"><div class="head">TOP COMPLAINT AREA</div>'
-                f'<div class="body">Out of the tracked aspects, '
-                f'<b>{top_neg_aspect}</b> has the lowest sentiment '
-                f'(<b>{top_neg_share*100:.0f}%</b> of mentions are negative). '
-                'This is where retention spend pays back fastest.'
-                '</div></div>',
-                unsafe_allow_html=True,
+            note(
+                f"Of the tracked aspects, <b>{top_neg_aspect}</b> has the lowest sentiment "
+                f"— <b>{top_neg_share*100:.0f}%</b> of the mentions are negative. That's "
+                f"usually where a fix pays back fastest, since it's the thing customers "
+                f"are already telling you about."
             )
 
         # -- Time-series trend --------------------------------------------
@@ -581,31 +597,33 @@ else:
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=ts["date"], y=ts["pos_prob"], mode="lines",
-            line=dict(color="#F39C12", width=3), fill="tozeroy",
-            fillcolor="rgba(243,156,18,0.18)", name="30-day rolling sentiment",
+            line=dict(color=POS, width=3), fill="tozeroy",
+            fillcolor="rgba(75,158,122,0.16)", name="30-day rolling sentiment",
         ))
-        fig.add_hline(y=0.5, line_dash="dash", line_color="#95A5A6",
+        fig.add_hline(y=0.5, line_dash="dash", line_color=MUTED,
                       annotation_text="Neutral", annotation_position="right")
         fig.update_layout(
             yaxis=dict(range=[0, 1], tickformat=".0%",
                        title="Positive-sentiment share"),
             xaxis=dict(title=""),
-            height=340, margin=dict(l=10, r=10, t=10, b=10),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(style_fig(fig, 340), use_container_width=True)
 
         if len(ts) > 1:
             start, end = float(ts["pos_prob"].iloc[0]), float(ts["pos_prob"].iloc[-1])
             delta = end - start
             direction = "improving" if delta > 0.02 else ("worsening" if delta < -0.02 else "flat")
-            st.markdown(
-                '<div class="insight"><div class="head">TREND</div>'
-                f'<div class="body">Rolling sentiment has moved from '
-                f'<b>{start*100:.0f}%</b> to <b>{end*100:.0f}%</b> '
-                f'over the window — <b>{direction}</b>. '
-                f'{"Keep doing what is working." if direction == "improving" else ("Investigate which aspect started slipping and when." if direction == "worsening" else "Stable book — small interventions can still tilt this.")}'
-                '</div></div>',
-                unsafe_allow_html=True,
+            trend_tail = (
+                "It's heading the right way, so the sensible thing is to keep doing whatever's working."
+                if direction == "improving" else
+                "It's slipping — worth tracing which aspect started dragging, and roughly when."
+                if direction == "worsening" else
+                "It's fairly flat, but a small, well-aimed intervention can still tip it."
+            )
+            note(
+                f"Rolling sentiment has moved from <b>{start*100:.0f}%</b> to "
+                f"<b>{end*100:.0f}%</b> across the window — broadly <b>{direction}</b>. "
+                f"{trend_tail}"
             )
 
         # -- Business action panel ----------------------------------------
@@ -618,12 +636,10 @@ else:
             "Support":  "Re-time the support escalation matrix; auto-route refund / warranty tickets to a senior agent.",
         }
         if top_neg_aspect:
-            head = f"PRIORITY ACTION: {top_neg_aspect.upper()}"
-            body = action_lib.get(top_neg_aspect, "Investigate further.")
-            st.markdown(
-                f'<div class="insight"><div class="head">{head}</div>'
-                f'<div class="body">Top complaint area: <b>{top_neg_aspect}</b> &mdash; {body}</div></div>',
-                unsafe_allow_html=True,
+            body = action_lib.get(top_neg_aspect, "investigate it further before acting.")
+            note(
+                f"The aspect dragging hardest is <b>{top_neg_aspect}</b>, so that's where "
+                f"I'd start. In practice that means: {body[0].lower() + body[1:]}"
             )
         else:
             st.info("No dominant negative aspect detected. Continue monitoring.")

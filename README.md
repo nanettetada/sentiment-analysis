@@ -21,13 +21,18 @@
 
 ---
 
-## :dart: Why I built this
+<p align="center">
+  <img src="docs/preview.png" alt="Dashboard preview" width="900">
+</p>
+
+
+## Why I built this
 
 A sentiment classifier on its own is a science-fair project. **ReviewCoach** is the same model wrapped in a conversational interface that actually does something useful — it scores any text you paste, explains the per-token contribution, and helps you rewrite it more positively, more critically, or more formally.
 
 The model is a fine-tuned **DistilBERT** running locally inside the app (no API keys, no data leaves the environment). The conversation layer is a small intent classifier I wrote on top.
 
-## :sparkles: What it can do
+## What it can do
 
 | Ask it... | And it... |
 |---|---|
@@ -37,7 +42,7 @@ The model is a fine-tuned **DistilBERT** running locally inside the app (no API 
 | *"Make it more formal"* | Replaces casual words (*gonna*, *stuff*, *guys*) with formal equivalents. |
 | *"Rewrite it more harshly"* | Flips positive-leaning tokens to critical equivalents. |
 
-## :building_construction: How it works
+## How it works
 
 ```
    User message
@@ -57,7 +62,7 @@ The model is a fine-tuned **DistilBERT** running locally inside the app (no API 
 
 The per-token attribution is done by **masking each token in turn and observing how the positive-class probability shifts** — a lightweight version of LIME / occlusion sensitivity.
 
-## :computer: Run it yourself
+## Run it yourself
 
 ```bash
 pip install -r requirements.txt
@@ -68,7 +73,7 @@ First launch downloads DistilBERT (~250 MB). After that, every score is instant.
 
 There's also a classical-ML notebook (`sentiment_analysis.ipynb`) comparing TF-IDF + Logistic Regression / SVM / Naive Bayes side-by-side with DistilBERT — the classical pipeline matches DistilBERT on accuracy at roughly **100× the serving cost**, which was the punchline of the original project.
 
-## :test_tube: Try these conversations
+## Try these conversations
 
 1. **Live scoring**
    - You: *"Honestly this gadget is the best thing I've bought all year, build quality is incredible and delivery was lightning fast."*
@@ -84,7 +89,7 @@ There's also a classical-ML notebook (`sentiment_analysis.ipynb`) comparing TF-I
    - You: *"Rewrite that to be more positive"*
    - Bot: *"Their support is limited and taking time. Total investment that didn't land."* — then shows the new score.
 
-## :rocket: What I'd build next
+## What I'd build next
 
 - Swap the rule-based rewrites for a real seq2seq model (T5-small or Flan-T5) so the suggestions are grammatically tighter.
 - Add aspect-based sentiment: separate the *price* complaints from the *quality* complaints in a long review.

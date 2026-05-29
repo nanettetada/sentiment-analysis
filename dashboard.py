@@ -37,11 +37,19 @@ ASPECT_KEYWORDS: dict[str, list[str]] = {
                  "ticket", "response", "fix", "repair"],
 }
 
-# A calm, professional palette — not the marketing-hero template look.
-INK = "#1f2933"
-MUTED = "#6b7280"
-POS = "#4b9e7a"      # muted green for positive
-NEG = "#b4452f"      # warm brick for negative
+# ---- Fintech palette -------------------------------------------------------
+BRAND = "#4C6FFF"      # electric blue
+BRAND2 = "#6D8BFF"     # lighter blue, for the hero gradient
+INK = "#16161D"
+MUTED = "#5B6172"
+BODY = "#5B6172"
+GREY = "#9AA0AE"
+SOFT = "#F5F6FA"
+LINE = "#EEF0F4"
+FONT = "Manrope"
+POS = "#16B364"      # green for positive
+NEG = "#FF5A5F"      # coral for negative
+WARN = "#FB8C00"
 PLOT_TEMPLATE = "plotly_white"
 
 st.set_page_config(
@@ -53,48 +61,80 @@ st.set_page_config(
 st.markdown(
     f"""
     <style>
-    #MainMenu, footer {{visibility: hidden;}}
-    .badge {{
-        display: inline-block; padding: 4px 12px; border-radius: 20px;
-        font-size: 12px; font-weight: 700; letter-spacing: 0.6px;
-        color: white; margin: 0 4px;
+    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+    html, body, [class*="css"], .stMarkdown, button, input, textarea {{
+        font-family: '{FONT}', system-ui, sans-serif;
     }}
-    .badge.pos {{ background: {POS}; }}
-    .badge.neg {{ background: {NEG}; }}
+    #MainMenu, header, footer {{ visibility: hidden; }}
+    .block-container {{ padding-top: 1.6rem; padding-bottom: 3rem; max-width: 1180px; }}
+
+    .badge {{ display:inline-block; padding:5px 14px; border-radius:999px;
+        font-size:12px; font-weight:700; letter-spacing:.6px; color:#fff; margin:0 4px; }}
+    .badge.pos {{ background:{POS}; }}
+    .badge.neg {{ background:{NEG}; }}
+
+    .hero {{ background: linear-gradient(135deg, {BRAND} 0%, {BRAND2} 100%);
+        border-radius: 24px; padding: 26px 30px 22px 30px; color:#fff;
+        box-shadow: 0 18px 40px rgba(76,111,255,.26); }}
+    .hero .brand {{ font-size:14px; font-weight:700; opacity:.92; display:flex;
+        align-items:center; gap:8px; }}
+    .hero .dot {{ width:9px; height:9px; border-radius:50%; background:#fff; display:inline-block; }}
+    .hero .value {{ font-size:32px; font-weight:800; line-height:1.12; margin-top:14px; letter-spacing:-.5px; }}
+    .hero .sub {{ font-size:15px; opacity:.95; margin-top:8px; max-width:660px; }}
+    .chips {{ display:flex; gap:10px; flex-wrap:wrap; margin-top:18px; }}
+    .chip {{ background: rgba(255,255,255,.18); border-radius:12px; padding:9px 14px; font-size:13px; }}
+    .chip b {{ font-size:16px; font-weight:800; display:block; }}
+
+    .callout {{ border-radius:16px; padding:15px 18px; margin:6px 0 20px 0;
+        font-size:15px; line-height:1.6; color:#3a3f4d; }}
+
+    [data-testid="stMetric"] {{ background:#fff; border:1px solid #F0F1F5; border-radius:16px;
+        padding:14px 18px; box-shadow:0 1px 3px rgba(20,22,30,.05), 0 8px 22px rgba(20,22,30,.04); }}
+    [data-testid="stMetricValue"] {{ font-weight:800; color:{INK}; }}
+    [data-testid="stMetricLabel"] p {{ font-weight:600; color:{BODY}; }}
     </style>
 
-    <div style="margin:-6px 0 6px 0;">
-      <div style="font-size:13px; letter-spacing:.8px; color:{MUTED};
-                  text-transform:uppercase;">Customer reviews &middot; sentiment</div>
-      <h1 style="margin:2px 0 4px 0; font-size:30px; font-weight:700; color:{INK};">
-        Reading the tone of what customers write</h1>
-      <div style="font-size:16px; color:{MUTED};">
-        A sentiment tool built on a fine-tuned DistilBERT — coach a single review,
-        or score a whole file and see where the complaints cluster.</div>
+    <div class="hero">
+      <div class="brand"><span class="dot"></span> Customer reviews &middot; sentiment</div>
+      <div class="value">Reading the tone of what customers write</div>
+      <div class="sub">A fine-tuned DistilBERT that reads sentiment the way a person would —
+        coach a single review and see <i>why</i> it landed, or score a whole file and find
+        where the complaints cluster.</div>
+      <div class="chips">
+        <span class="chip">model <b>DistilBERT</b></span>
+        <span class="chip">SST-2 accuracy <b>~92%</b></span>
+        <span class="chip">runs locally <b>no API</b></span>
+      </div>
     </div>
     """,
     unsafe_allow_html=True,
 )
-st.divider()
+st.write("")
 
 
-def note(text: str) -> None:
-    """A quiet analyst's note — sentence-case, no shouting, woven into the page."""
+def note(text: str, tone: str = "neutral") -> None:
+    bg = {"brand": "#EEF1FF", "good": "#E9FBF3", "warn": "#FFF6E9", "neutral": SOFT}[tone]
+    bar = {"brand": BRAND, "good": POS, "warn": WARN, "neutral": GREY}[tone]
     st.markdown(
-        f'<div style="border-left:3px solid #d7dbe0; background:#f7f8fa; '
-        f'padding:11px 16px; margin:4px 0 22px 0; color:#3a434d; '
-        f'font-size:15px; line-height:1.6;">{text}</div>',
+        f'<div class="callout" style="background:{bg};border-left:4px solid {bar};">{text}</div>',
         unsafe_allow_html=True,
     )
 
 
-def style_fig(fig, height=340):
+def style_fig(fig, height=340, legend=False):
     fig.update_layout(
         template=PLOT_TEMPLATE,
         height=height,
-        margin=dict(l=10, r=10, t=30, b=10),
-        font=dict(color=INK, size=13),
+        margin=dict(l=8, r=8, t=30, b=8),
+        font=dict(family=FONT, color=INK, size=13),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        showlegend=legend,
     )
+    if fig.layout.title.text:
+        fig.update_layout(title_font=dict(family=FONT, size=15, color=INK))
+    fig.update_xaxes(gridcolor=LINE, zeroline=False)
+    fig.update_yaxes(gridcolor=LINE, zeroline=False)
     return fig
 
 
@@ -322,8 +362,8 @@ def render_score(s: dict, text: str) -> None:
                 "bar": {"color": colour},
                 "bgcolor": "white", "borderwidth": 0,
                 "steps": [
-                    {"range": [0, 50], "color": "#f7e4de"},
-                    {"range": [50, 100], "color": "#eaf5ef"},
+                    {"range": [0, 50], "color": "#FFECEC"},
+                    {"range": [50, 100], "color": "#E9FBF3"},
                 ],
             },
         ))
@@ -428,7 +468,7 @@ with st.sidebar:
 
 if mode == "Chat coach":
     for turn in st.session_state.history:
-        with st.chat_message(turn["role"], avatar=("🧑" if turn["role"] == "user" else "🤖")):
+        with st.chat_message(turn["role"]):
             if turn.get("text"):
                 st.markdown(turn["text"])
             if turn.get("score"):
@@ -445,10 +485,10 @@ if mode == "Chat coach":
     prompt = st.chat_input("Paste a review, ask me to rewrite, or ask why...")
     if prompt:
         st.session_state.history.append({"role": "user", "text": prompt, "scored_text": prompt})
-        with st.chat_message("user", avatar="🧑"):
+        with st.chat_message("user"):
             st.markdown(prompt)
 
-        with st.chat_message("assistant", avatar="🤖"):
+        with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 result = respond(prompt, st.session_state.history)
             if result.get("text"):
@@ -568,7 +608,7 @@ else:
             fig = px.bar(
                 grp, x="mean_score", y="aspect", orientation="h",
                 color="mean_score",
-                color_continuous_scale=[NEG, "#c98a3a", POS],
+                color_continuous_scale=[NEG, WARN, POS],
                 range_color=[0, 1],
                 text=grp["mean_score"].map(lambda x: f"{x*100:.0f}%"),
                 hover_data={"mentions": True, "pos_share": ":.0%",

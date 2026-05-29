@@ -22,7 +22,7 @@
 ---
 
 <p align="center">
-  <img src="docs/preview.png" alt="Dashboard preview" width="900">
+  <img src="docs/dashboard.png" alt="Dashboard preview" width="900">
 </p>
 
 

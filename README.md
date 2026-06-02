@@ -3,6 +3,9 @@
 A small sentiment workbench built on a fine-tuned DistilBERT. Coach a single review (score it, explain why, rewrite it) or score a whole file at once.
 
 <p>
+  <a href="https://review-sentiment-engine.streamlit.app">
+    <img alt="Live demo" src="https://img.shields.io/badge/Open_dashboard-Live_demo-3A5A8A?style=flat-square&logo=streamlit&logoColor=white" />
+  </a>
   <img alt="Python"   src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" />
   <img alt="Transformers" src="https://img.shields.io/badge/Transformers-FFD21E?style=flat-square&logo=huggingface&logoColor=black" />
   <img alt="PyTorch"  src="https://img.shields.io/badge/PyTorch-EE4C2C?style=flat-square&logo=pytorch&logoColor=white" />
